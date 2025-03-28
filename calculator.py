@@ -1,177 +1,200 @@
 import pulp
 import json
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
+from graphlib import TopologicalSorter
 
 class FactoryOptimizer:
     def __init__(self, recipes, rate_multiplier, factory_level, total_factories):
-        self.recipes = OrderedDict(sorted(recipes.items(), 
-            key=lambda x: -x[1]["TierMultiplier"]))
+        self.recipes = recipes
         self.rate_multiplier = rate_multiplier
         self.factory_level = factory_level
         self.total_factories = total_factories
         self._clean_recipes()
-        self._calculate_rates()
+        self._precalculate_rates()
+        self._build_dependency_graph()
 
     def _clean_recipes(self):
-        """Remove inefficient conversions and invalid recipes"""
-        self.recipes.pop("Barrel to Leek", None)
-        
-    def _calculate_rates(self):
-        """Pre-calculate all production metrics"""
-        for name, data in self.recipes.items():
-            effective_rate = data["Base Rate"] * (self.rate_multiplier ** (self.factory_level - 1))
-            self.recipes[name].update({
-                "Effective Rate": effective_rate,
-                "GPM": effective_rate * data["Gold Gain"] * 60
-            })
+        if "Barrel to Leek" in self.recipes:
+            del self.recipes["Barrel to Leek"]
 
-    def _solve_problem(self, prob):
-        """Silent solver with error handling"""
-        try:
-            prob.solve(pulp.PULP_CBC_CMD(msg=0))
-            return pulp.LpStatus[prob.status] == "Optimal"
-        except Exception as e:
-            print(f"Solving error: {str(e)}")
-            return False
+    def _precalculate_rates(self):
+        for name, data in self.recipes.items():
+            base_rate = data["Base Rate"]
+            effective_rate = base_rate * (self.rate_multiplier ** (self.factory_level - 1))
+            data["Effective Rate"] = effective_rate
+            data["GPM"] = effective_rate * data["Gold Gain"] * 60
+
+    def _build_dependency_graph(self):
+        self.dependency_graph = {}
+        for name, data in self.recipes.items():
+            dependencies = []
+            for input_res in data["Inputs"]:
+                if input_res in self.recipes:
+                    dependencies.append(input_res)
+            self.dependency_graph[name] = set(dependencies)
+        self.build_order = list(TopologicalSorter(self.dependency_graph).static_order())
 
     def optimize_gpm(self):
-        """Maximize gold production"""
         prob = pulp.LpProblem("GPM_Optimization", pulp.LpMaximize)
         vars = pulp.LpVariable.dicts("F", self.recipes.keys(), lowBound=0, cat="Integer")
         
-        # Objective: Total GPM
-        prob += pulp.lpSum(vars[name] * self.recipes[name]["GPM"] for name in self.recipes)
+        resource_balance = defaultdict(pulp.LpAffineExpression)
+        for name in self.build_order:
+            data = self.recipes[name]
+            rate = data["Effective Rate"]
+            count = vars[name]
+            
+            for res, qty in data["Outputs"].items():
+                resource_balance[res] += qty * rate * count
+            for res, qty in data["Inputs"].items():
+                if res != "Leek":
+                    resource_balance[res] -= qty * rate * count
+
+        prob += pulp.lpSum(vars[name] * data["GPM"] for name, data in self.recipes.items())
         prob += pulp.lpSum(vars.values()) <= self.total_factories
         
-        # Resource constraints
-        resources = set()
-        for recipe in self.recipes.values():
-            resources.update(recipe["Inputs"].keys())
-            resources.update(recipe["Outputs"].keys())
-        resources.discard("Leek")
-        
-        for res in resources:
-            prob += pulp.lpSum(
-                vars[name] * qty * self.recipes[name]["Effective Rate"]
-                for name in self.recipes
-                for output, qty in self.recipes[name]["Outputs"].items() if output == res
-            ) >= pulp.lpSum(
-                vars[name] * qty * self.recipes[name]["Effective Rate"]
-                for name in self.recipes
-                for input_, qty in self.recipes[name]["Inputs"].items() if input_ == res
-            )
-        
-        if not self._solve_problem(prob):
+        for res in resource_balance:
+            if res != "Leek":
+                prob += resource_balance[res] >= 0
+
+        if prob.solve(pulp.PULP_CBC_CMD(msg=0)) != pulp.LpStatusOptimal:
             return None
             
         return self._parse_results(vars, "GPM")
 
     def optimize_tiers(self):
-        """Maximize highest achievable tier"""
-        for tier_name in self.recipes:
+        for target_tier in reversed(self.build_order):
             prob = pulp.LpProblem("Tier_Optimization", pulp.LpMaximize)
             vars = pulp.LpVariable.dicts("F", self.recipes.keys(), lowBound=0, cat="Integer")
             
-            # Objective: Maximize target tier production
-            prob += vars[tier_name] * self.recipes[tier_name]["Effective Rate"]
+            prob += vars[target_tier] * self.recipes[target_tier]["Effective Rate"]
             prob += pulp.lpSum(vars.values()) <= self.total_factories
             
-            # Resource constraints
-            resources = set()
-            for recipe in self.recipes.values():
-                resources.update(recipe["Inputs"].keys())
-                resources.update(recipe["Outputs"].keys())
-            resources.discard("Leek")
-            
-            for res in resources:
-                prob += pulp.lpSum(
-                    vars[name] * qty * self.recipes[name]["Effective Rate"]
-                    for name in self.recipes
-                    for output, qty in self.recipes[name]["Outputs"].items() if output == res
-                ) >= pulp.lpSum(
-                    vars[name] * qty * self.recipes[name]["Effective Rate"]
-                    for name in self.recipes
-                    for input_, qty in self.recipes[name]["Inputs"].items() if input_ == res
-                )
-            
-            if self._solve_problem(prob) and vars[tier_name].varValue > 0:
-                return self._parse_results(vars, "Tier", tier_name)
-        
+            resource_balance = defaultdict(pulp.LpAffineExpression)
+            for name in self.build_order:
+                data = self.recipes[name]
+                rate = data["Effective Rate"]
+                count = vars[name]
+                
+                for res, qty in data["Outputs"].items():
+                    resource_balance[res] += qty * rate * count
+                for res, qty in data["Inputs"].items():
+                    if res != "Leek":
+                        resource_balance[res] -= qty * rate * count
+
+            for res in resource_balance:
+                if res != "Leek":
+                    prob += resource_balance[res] >= 0
+
+            if prob.solve(pulp.PULP_CBC_CMD(msg=0)) == pulp.LpStatusOptimal:
+                if vars[target_tier].varValue > 0:
+                    return self._parse_results(vars, "Tier", target_tier)
         return None
 
     def _parse_results(self, vars, mode, target_tier=None):
-        """Format results consistently"""
-        results = []
-        total_gpm = 0
-        max_tier = 0
+        results = {
+            "allocations": [],
+            "total_gpm": 0,
+            "mode": mode,
+            "target_tier": target_tier
+        }
         
-        for name in self.recipes:
-            count = int(vars[name].varValue)
+        allocs = []
+        resource_flows = defaultdict(float)
+        for name in self.build_order:
+            data = self.recipes[name]
+            count = int(vars[name].varValue + 0.5)
             if count <= 0:
                 continue
                 
-            data = self.recipes[name]
-            gpm = data["GPM"] * count
-            results.append({
+            rate = data["Effective Rate"]
+            production = rate * count
+            gpm = production * data["Gold Gain"] * 60
+            
+            allocs.append({
                 "name": name,
                 "count": count,
                 "tier": data["TierMultiplier"],
-                "gpm": gpm,
-                "rate": data["Effective Rate"] * count
+                "production": production,
+                "gpm": gpm
             })
-            total_gpm += gpm
-            max_tier = max(max_tier, data["TierMultiplier"])
-        
-        return {
-            "total_gpm": total_gpm,
-            "max_tier": max_tier,
-            "target_tier": target_tier,
-            "allocations": sorted(results, key=lambda x: (-x["tier"], -x["gpm"])),
-            "mode": mode
-        }
+            results["total_gpm"] += gpm
+            
+            for res, qty in data["Outputs"].items():
+                resource_flows[res] += qty * production
+            for res, qty in data["Inputs"].items():
+                if res != "Leek":
+                    resource_flows[res] -= qty * production
+
+        # Determine achieved tier for GPM
+        max_tier = 0
+        achieved_tier_name = "None"
+        achieved_tier_value = 0
+        for alloc in allocs:
+            if alloc['tier'] > achieved_tier_value:
+                achieved_tier_value = alloc['tier']
+                achieved_tier_name = alloc['name']
+        results["achieved_tier_name"] = achieved_tier_name
+        results["achieved_tier_value"] = achieved_tier_value
+
+        # Filter build order to only include used recipes
+        used_names = {alloc['name'] for alloc in allocs}
+        filtered_build_order = [name for name in self.build_order if name in used_names]
+        results["build_order"] = filtered_build_order
+
+        results["allocations"] = allocs
+        results["resource_balance"] = resource_flows
+        return results
 
     def print_results(self, results):
-        """Clean formatted output"""
         if not results:
-            print("No feasible solution found")
+            print("\nNo valid production chain found")
             return
             
         print(f"\n{'='*50}")
-        print(f"{'GPM Optimization' if results['mode'] == 'GPM' else 'Tier Optimization'} Results")
-        print(f"{'-'*50}")
+        print(f"{results['mode'].upper()} RESULTS")
         print(f"Total GPM: {results['total_gpm']:,.0f}")
-        print(f"Highest Tier: {results['max_tier']}x")
-        if results['mode'] == 'Tier':
-            print(f"Target Tier Achieved: {results['target_tier']}")
+        
+        if results['mode'] == "GPM":
+            print(f"Achieved Tier: {results['achieved_tier_name']} (Tier {results['achieved_tier_value']}x)")
+        elif results['mode'] == "Tier":
+            print(f"Achieved Tier: {results['target_tier']} (Tier {self.recipes[results['target_tier']]['TierMultiplier']}x)")
             
-        print("\nFactory Allocation:")
+        print("\nOptimal Factory Chain:")
         for alloc in results["allocations"]:
-            print(f"  {alloc['name']}:")
-            print(f"    Factories: {alloc['count']}")
-            print(f"    Tier: {alloc['tier']}x")
-            print(f"    GPM: {alloc['gpm']:,.0f}")
-            print(f"    Production: {alloc['rate']:.6f}/s")
+            if alloc['count'] > 0:
+                print(f"  {alloc['name']}: {alloc['count']} factories")
+                print(f"    Production: {alloc['production']:.2f}/s")
+                print(f"    Tier Value: {alloc['tier']}x")
+                print(f"    GPM: {alloc['gpm']:,.0f}")
+        
+        print("\nDependency-Validated Build Order:")
+        for idx, name in enumerate(results["build_order"], 1):
+            print(f"  {idx}. {name}")
+        
+        print("\nResource Balance:")
+        for res, flow in results["resource_balance"].items():
+            if res != "Leek" and abs(flow) >= 1e-6:
+                status = "✅ OVERFLOW" if flow > 0 else "❌ DEFICIT"
+                print(f"  {res}: {abs(flow):.2f}/s {status}")
         print("="*50)
 
-# Usage example
+# JSON Loading and Execution
 if __name__ == "__main__":
-    # Load recipes (replace with JSON loading if needed)
     with open('recipes.json') as f:
         recipes = json.load(f, object_pairs_hook=OrderedDict)
     
-    # Initialize optimizer
     optimizer = FactoryOptimizer(
         recipes=recipes,
         rate_multiplier=2,
-        factory_level=11,
-        total_factories=8
+        factory_level=20,
+        total_factories=11
     )
     
-    # Compare both strategies
-    print("\n=== Running GPM Optimization ===")
+    print("=== GPM Optimization ===")
     gpm_results = optimizer.optimize_gpm()
     optimizer.print_results(gpm_results)
     
-    print("\n=== Running Tier Optimization ===")
+    print("\n=== Tier Optimization ===")
     tier_results = optimizer.optimize_tiers()
     optimizer.print_results(tier_results)
