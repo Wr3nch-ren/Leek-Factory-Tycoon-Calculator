@@ -1,0 +1,79 @@
+{
+    "Leek Soup": {
+        "Inputs": {"Leek": 10},
+        "Outputs": {"Leek Soup": 1},
+        "Base Rate": 0.1,
+        "Gold Gain": 1,
+        "TierMultiplier": 4
+    },
+    "Leek Cake": {
+        "Inputs": {"Leek Soup": 10},
+        "Outputs": {"Leek Cake": 1},
+        "Base Rate": 0.02,
+        "Gold Gain": 40,
+        "TierMultiplier": 8
+    },
+    "Atomic Leek": {
+        "Inputs": {"Leek Cake": 10, "Leek Soup": 25},
+        "Outputs": {"Atomic Leek": 1},
+        "Base Rate": 0.0012,
+        "Gold Gain": 800,
+        "TierMultiplier": 16
+    },
+    "Barrel of Leek": {
+        "Inputs": {"Leek": 10000},
+        "Outputs": {"Barrel of Leek": 1},
+        "Base Rate": 0.000033,
+        "Gold Gain": 10000,
+        "TierMultiplier": 1
+    },
+    "Barrel to Leek": {
+        "Inputs": {"Barrel of Leek": 1},
+        "Outputs": {"Leek": 10000},
+        "Base Rate": 0.000033,
+        "Gold Gain": 1,
+        "TierMultiplier": 1
+    },
+    "Golden Leek": {
+        "Inputs": {"Atomic Leek": 10, "Leek Cake": 50, "Barrel of Leek": 0.2},
+        "Outputs": {"Golden Leek": 1, "Leek Soup": 500},
+        "Base Rate": 0.000038,
+        "Gold Gain": 500000,
+        "TierMultiplier": 34
+    },
+    "Ultraleek": {
+        "Inputs": {"Golden Leek": 1, "Atomic Leek": 20, "Leek Soup": 1000, "Barrel of Leek": 0.4},
+        "Outputs": {"Ultraleek": 1, "Leek": 100000},
+        "Base Rate": 0.0000018,
+        "Gold Gain": 5000000,
+        "TierMultiplier": 59
+    },
+    "Atomic Chives": {
+        "Inputs": {"Barrel of Leek": 2, "Atomic Leek": 20},
+        "Outputs": {"Atomic Chives": 1},
+        "Base Rate": 0.0000018,
+        "Gold Gain": 400000,
+        "TierMultiplier": 8
+    },
+    "Refined Ultraleek": {
+        "Inputs": {"Ultraleek": 5, "Atomic Chives": 20, "Leek": 1000000},
+        "Outputs": {"Refined Ultraleek": 1, "Barrel of Leek": 100},
+        "Base Rate": 0.000000086,
+        "Gold Gain": 150000000,
+        "TierMultiplier": 113
+    },
+    "Monster Leek": {
+        "Inputs": {"Refined Ultraleek": 10, "Ultraleek": 50, "Golden Leek": 500, "Leek": 100000000},
+        "Outputs": {"Monster Leek": 1},
+        "Base Rate": 0.0000000044,
+        "Gold Gain": 10000000000,
+        "TierMultiplier": 288
+    },
+    "Monsterleek XXL": {
+        "Inputs": {"Monster Leek": 50, "Refined Ultraleek": 1000, "Ultraleek": 15000, "Atomic Leek": 1000000},
+        "Outputs": {"Monsterleek XXL": 1},
+        "Base Rate": 0.000000000015,
+        "Gold Gain": 3000000000000000000,
+        "TierMultiplier": 539
+    }
+}
